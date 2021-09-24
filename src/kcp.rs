@@ -23,13 +23,15 @@ const KCP_ASK_SEND: u32 = 1;
 const KCP_ASK_TELL: u32 = 2;
 
 const KCP_WND_SND: u16 = 32;
-const KCP_WND_RCV: u16 = 128;
+//const KCP_WND_RCV: u16 = 128;
+const KCP_WND_RCV: u16 = 256;
 
 const KCP_MTU_DEF: usize = 1400;
 // const KCP_ACK_FAST: u32 = 3;
 
 const KCP_INTERVAL: u32 = 100;
-const KCP_OVERHEAD: usize = 24;
+//pub const KCP_OVERHEAD: usize = 24;
+pub const KCP_OVERHEAD: usize = 28;
 // const KCP_DEADLINK: u32 = 20;
 
 const KCP_THRESH_INIT: u16 = 2;
@@ -63,6 +65,7 @@ fn timediff(later: u32, earlier: u32) -> i32 {
 #[derive(Default, Clone, Debug)]
 struct KcpSegment {
     conv: u32,
+    token: u32,
     cmd: u8,
     frg: u8,
     wnd: u16,
@@ -80,6 +83,7 @@ impl KcpSegment {
     fn new_with_data(data: BytesMut) -> Self {
         KcpSegment {
             conv: 0,
+            token: 0,
             cmd: 0,
             frg: 0,
             wnd: 0,
@@ -105,6 +109,7 @@ impl KcpSegment {
         }
 
         buf.put_u32_le(self.conv);
+        buf.put_u32_le(self.token);
         buf.put_u8(self.cmd);
         buf.put_u8(self.frg);
         buf.put_u16_le(self.wnd);
@@ -121,7 +126,7 @@ impl KcpSegment {
 }
 
 #[derive(Default)]
-struct KcpOutput<O: Write>(O);
+pub struct KcpOutput<O: Write>(pub O);
 
 impl<O: Write> Write for KcpOutput<O> {
     #[inline]
@@ -138,6 +143,7 @@ impl<O: Write> Write for KcpOutput<O> {
 
 /// KCP control
 #[derive(Default)]
+#[repr(C)]
 pub struct Kcp<Output: Write> {
     /// Conversation ID
     conv: u32,
@@ -147,6 +153,9 @@ pub struct Kcp<Output: Write> {
     mss: u32,
     /// Connection state
     state: i32,
+
+    /// User token
+    token: u32,
 
     /// First unacknowledged packet
     snd_una: u32,
@@ -222,7 +231,7 @@ pub struct Kcp<Output: Write> {
     /// Get conv from the next input call
     input_conv: bool,
 
-    output: KcpOutput<Output>,
+    pub output: KcpOutput<Output>,
 }
 
 impl<Output: Write> Kcp<Output> {
@@ -230,24 +239,25 @@ impl<Output: Write> Kcp<Output> {
     /// `output` is the callback object for writing.
     ///
     /// `conv` represents conversation.
-    pub fn new(conv: u32, output: Output) -> Self {
-        Kcp::construct(conv, output, false)
+    pub fn new(conv: u32, token: u32, output: Output) -> Self {
+        Kcp::construct(conv, token, output, false)
     }
 
     /// Creates a KCP control object in stream mode, `conv` must be equal in both endpoints in one connection.
     /// `output` is the callback object for writing.
     ///
     /// `conv` represents conversation.
-    pub fn new_stream(conv: u32, output: Output) -> Self {
-        Kcp::construct(conv, output, true)
+    pub fn new_stream(conv: u32, token: u32, output: Output) -> Self {
+        Kcp::construct(conv, token, output, true)
     }
 
-    fn construct(conv: u32, output: Output, stream: bool) -> Self {
+    fn construct(conv: u32, token: u32, output: Output, stream: bool) -> Self {
         Kcp {
             conv,
             snd_una: 0,
             snd_nxt: 0,
             rcv_nxt: 0,
+            token,
             rx_rttval: 0,
             rx_srtt: 0,
             state: 0,
@@ -451,7 +461,7 @@ impl<Output: Write> Kcp<Output> {
                 self.rx_srtt - rtt
             };
             self.rx_rttval = (3 * self.rx_rttval + delta) / 4;
-            self.rx_srtt = (7 * self.rx_srtt + rtt) / 8;
+            self.rx_srtt = ((7 * (self.rx_srtt as u64) + (rtt as u64)) / 8) as u32;
             if self.rx_srtt < 1 {
                 self.rx_srtt = 1;
             }
@@ -601,6 +611,8 @@ impl<Output: Write> Kcp<Output> {
                 }
             }
 
+            let token = buf.get_u32_le();
+
             let cmd = buf.get_u8();
             let frg = buf.get_u8();
             let wnd = buf.get_u16_le();
@@ -625,6 +637,10 @@ impl<Output: Write> Kcp<Output> {
                     debug!("input cmd={} unrecognized", cmd);
                     return Err(Error::UnsupportedCmd(cmd));
                 }
+            }
+
+            if token != self.token {
+                return Err(Error::TokenMismatch(token, self.token));
             }
 
             self.rmt_wnd = wnd;
@@ -673,6 +689,7 @@ impl<Output: Write> Kcp<Output> {
                             let mut segment = KcpSegment::new_with_data(sbuf);
 
                             segment.conv = conv;
+                            segment.token = token;
                             segment.cmd = cmd;
                             segment.frg = frg;
                             segment.wnd = wnd;
@@ -828,6 +845,7 @@ impl<Output: Write> Kcp<Output> {
 
         let mut segment = KcpSegment {
             conv: self.conv,
+            token: self.token,
             cmd: KCP_CMD_ACK,
             wnd: self.wnd_unused(),
             una: self.rcv_nxt,
@@ -851,6 +869,7 @@ impl<Output: Write> Kcp<Output> {
             match self.snd_queue.pop_front() {
                 Some(mut new_segment) => {
                     new_segment.conv = self.conv;
+                    new_segment.token = self.token;
                     new_segment.cmd = KCP_CMD_PUSH;
                     new_segment.wnd = segment.wnd;
                     new_segment.ts = self.current;

@@ -8,6 +8,7 @@ extern crate log;
 
 mod error;
 mod kcp;
+mod api;
 
 /// The `KCP` prelude
 pub mod prelude {

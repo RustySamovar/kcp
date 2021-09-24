@@ -16,6 +16,7 @@ pub enum Error {
     UnsupportedCmd(u8),
     UserBufTooBig,
     UserBufTooSmall,
+    TokenMismatch(u32, u32),
 }
 
 impl StdError for Error {
@@ -70,6 +71,7 @@ impl From<Error> for io::Error {
             Error::UnsupportedCmd(..) => ErrorKind::Other,
             Error::UserBufTooBig => ErrorKind::Other,
             Error::UserBufTooSmall => ErrorKind::Other,
+            Error::TokenMismatch(..) => ErrorKind::Other,
         };
 
         make_io_error(kind, err)
