@@ -9,7 +9,8 @@ use bytes::{Buf, BufMut, BytesMut};
 use error::Error;
 use KcpResult;
 
-const KCP_RTO_NDL: u32 = 30;
+//const KCP_RTO_NDL: u32 = 30;
+const KCP_RTO_NDL: u32 = 20;
 const KCP_RTO_MIN: u32 = 100;
 const KCP_RTO_DEF: u32 = 200;
 const KCP_RTO_MAX: u32 = 60000;
@@ -32,7 +33,7 @@ const KCP_MTU_DEF: usize = 1400;
 const KCP_INTERVAL: u32 = 100;
 //pub const KCP_OVERHEAD: usize = 24;
 pub const KCP_OVERHEAD: usize = 28;
-// const KCP_DEADLINK: u32 = 20;
+const KCP_DEADLINK: u32 = 20;
 
 const KCP_THRESH_INIT: u16 = 2;
 const KCP_THRESH_MIN: u16 = 2;
@@ -269,7 +270,7 @@ impl<Output: Write> Kcp<Output> {
             updated: false,
             ts_probe: 0,
             probe_wait: 0,
-            dead_link: 10,
+            dead_link: KCP_DEADLINK,
             incr: 0,
             fastresend: 0,
             nocwnd: false,
